@@ -4,14 +4,14 @@ import {
   Mail, 
   User, 
   Lock, 
-  Video, 
+  /* Video, 
   Mic, 
   MicOff, 
   VideoOff, 
   MessageSquare, 
   X, 
   Send,
-  PhoneOff
+  PhoneOff */
 } from "lucide-react";
 import { AuthContext } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";

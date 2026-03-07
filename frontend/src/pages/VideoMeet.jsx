@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import io from "socket.io-client";
-import { Badge, IconButton, TextField, Snackbar } from "@mui/material";
+import { IconButton, TextField, Snackbar } from "@mui/material";
 import { Button } from "@mui/material";
 import VideocamIcon from "@mui/icons-material/Videocam";
 import VideocamOffIcon from "@mui/icons-material/VideocamOff";
@@ -14,7 +14,7 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 
 import styles from "../styles/videoComponent.module.css";
 
-const server_url = process.env.REACT_APP_SOCKET_URL || "https://videobox-backend.onrender.com"; // Update with your backend URL
+const server_url = process.env.REACT_APP_SOCKET_URL || "https://videobox-1.onrender.com"; // Update with your backend URL
 
 var connections = {};
 
