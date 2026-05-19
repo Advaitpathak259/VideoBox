@@ -309,6 +309,8 @@ export default function VideoMeetComponent() {
   }, [ensurePeerConnection]);
 
   const connectToSocketServer = () => {
+    const roomId = (meetingCode || window.location.pathname).replace(/^\/+/, "");
+
     socketRef.current = io.connect(server_url, {
       secure: false,
       reconnection: true,          /* FIX 8 */
@@ -372,7 +374,7 @@ export default function VideoMeetComponent() {
 
       socketRef.current.emit(
         "join-call",
-        meetingCode || window.location.pathname
+        roomId
       );
     });
   };

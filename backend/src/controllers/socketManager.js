@@ -24,7 +24,22 @@ const parseAllowedOrigins = () => {
 };
 
 const sanitizeRoomId = (room) => {
-  const roomId = String(room || "").trim();
+  let roomId = String(room || "").trim();
+  if (!roomId) return null;
+
+  // If client accidentally sends a full URL, normalize to pathname.
+  // Example: https://site.com/testroom -> testroom
+  if (/^https?:\/\//i.test(roomId)) {
+    try {
+      const url = new URL(roomId);
+      roomId = url.pathname || "";
+    } catch {
+      // Ignore parsing failure; keep original string.
+    }
+  }
+
+  roomId = roomId.trim().replace(/^\/+/, "");
+
   if (!roomId) return null;
   if (roomId.length > 200) return null;
   return roomId;
