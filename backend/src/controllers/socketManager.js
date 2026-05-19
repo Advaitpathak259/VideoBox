@@ -58,6 +58,14 @@ export const connectToSocket = (server) => {
   io.on("connection", (socket) => {
     console.log("Socket connected:", socket.id);
 
+    const broadcastParticipants = (roomId) => {
+      if (!roomId || !connections[roomId]) return;
+      const list = connections[roomId];
+      list.forEach((id) => {
+        io.to(id).emit("participants", list);
+      });
+    };
+
     socket.on("join-call", (room) => {
       const roomId = sanitizeRoomId(room);
       if (!roomId) return;
@@ -82,6 +90,8 @@ export const connectToSocket = (server) => {
       existingUsers.forEach((id) => {
         io.to(id).emit("user-joined", socket.id);
       });
+
+      broadcastParticipants(roomId);
 
       // Send old chat messages to newly joined user
       if (messages[roomId]) {
@@ -146,6 +156,8 @@ export const connectToSocket = (server) => {
       connections[room].forEach((id) => {
         io.to(id).emit("user-left", socket.id);
       });
+
+      broadcastParticipants(room);
 
       if (connections[room].length === 0) {
         delete connections[room];

@@ -13,6 +13,9 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import SendIcon from "@mui/icons-material/Send";
 import CloseIcon from "@mui/icons-material/Close";
 
+const DEBUG_WEBRTC =
+  String(process.env.REACT_APP_DEBUG_WEBRTC || "").toLowerCase() === "true";
+
 const server_url =
   process.env.REACT_APP_SOCKET_URL ||
   process.env.REACT_APP_API_URL ||
@@ -20,13 +23,46 @@ const server_url =
 
 const connections = {};
 
-const peerConfigConnections = {
-  iceServers: [
+const parseIceServers = () => {
+  const servers = [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
-    // { urls: "turn:your.turn.server:3478", username: "user", credential: "pass" },
-  ],
+  ];
+
+  // TURN (recommended for real-world networks)
+  // Example:
+  // REACT_APP_TURN_URLS=turn:turn.example.com:3478,turns:turn.example.com:5349
+  // REACT_APP_TURN_USERNAME=...
+  // REACT_APP_TURN_CREDENTIAL=...
+  const rawUrls = process.env.REACT_APP_TURN_URLS;
+  const turnUsername = process.env.REACT_APP_TURN_USERNAME;
+  const turnCredential = process.env.REACT_APP_TURN_CREDENTIAL;
+
+  const turnUrls = rawUrls
+    ? rawUrls
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+
+  if (turnUrls.length > 0) {
+    servers.push({
+      urls: turnUrls.length === 1 ? turnUrls[0] : turnUrls,
+      username: turnUsername,
+      credential: turnCredential,
+    });
+  }
+
+  return servers;
 };
+
+const peerConfigConnections = {
+  iceServers: parseIceServers(),
+};
+
+function dbg(...args) {
+  if (DEBUG_WEBRTC) console.log("[VideoBox:webrtc]", ...args);
+}
 
 function addStreamToConnection(pc, stream) {
   stream.getTracks().forEach((track) => {
@@ -45,6 +81,7 @@ function addStreamToConnection(pc, stream) {
 function attachOnTrack(pc, socketListId, videoRef, setVideos) {
   const remoteStream = new MediaStream();
   pc.ontrack = (event) => {
+    dbg("ontrack", { from: socketListId, kind: event.track?.kind });
     const incomingStream = event.streams?.[0];
     if (incomingStream) {
       incomingStream.getTracks().forEach((track) => {
@@ -108,6 +145,7 @@ export default function VideoMeetComponent() {
   const [askForUsername,  setAskForUsername]  = useState(true);
   const [username,        setUsername]        = useState("");
   const [videos,          setVideos]          = useState([]);
+  const [participants,    setParticipants]    = useState([]);
   const [copySnackbar,    setCopySnackbar]    = useState(false);
   const [pinnedSocketId,  setPinnedSocketId]  = useState(null); /* FIX 3 */
 
@@ -138,8 +176,6 @@ export default function VideoMeetComponent() {
       catch (e) { console.warn("ICE flush error:", e); }
     }
   };
-
-  useEffect(() => { getPermissions(); }, []); // eslint-disable-line
 
   const getPermissions = async () => {
     try {
@@ -253,8 +289,21 @@ export default function VideoMeetComponent() {
     const pc = new RTCPeerConnection(peerConfigConnections);
     connections[peerId] = pc;
 
+    dbg("pc:create", { peerId, iceServers: peerConfigConnections.iceServers });
+
+    pc.oniceconnectionstatechange = () => {
+      dbg("pc:iceConnectionState", { peerId, state: pc.iceConnectionState });
+    };
+    pc.onconnectionstatechange = () => {
+      dbg("pc:connectionState", { peerId, state: pc.connectionState });
+    };
+    pc.onsignalingstatechange = () => {
+      dbg("pc:signalingState", { peerId, state: pc.signalingState });
+    };
+
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
+        dbg("pc:localIce", { peerId, candidate: event.candidate.candidate });
         socketRef.current.emit(
           "signal",
           peerId,
@@ -282,16 +331,20 @@ export default function VideoMeetComponent() {
     if (signal.sdp) {
       try {
         const sdp = new RTCSessionDescription(signal.sdp);
+        dbg("signal:sdp", { fromId, type: sdp.type, state: pc.signalingState });
         const { signalingState } = pc;
         if (sdp.type === "offer") {
           if (signalingState !== "stable") { console.warn(`Ignoring offer — state: ${signalingState}`); return; }
           await pc.setRemoteDescription(sdp);
+          dbg("pc:setRemoteDescription", { fromId, type: "offer" });
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
+          dbg("pc:setLocalDescription", { fromId, type: "answer" });
           socketRef.current.emit("signal", fromId, JSON.stringify({ sdp: pc.localDescription }));
         } else if (sdp.type === "answer") {
           if (signalingState !== "have-local-offer") { console.warn(`Ignoring answer — state: ${signalingState}`); return; }
           await pc.setRemoteDescription(sdp);
+          dbg("pc:setRemoteDescription", { fromId, type: "answer" });
         }
         await flushIceCandidates(fromId);
       } catch (e) { console.error("SDP error:", e); }
@@ -299,10 +352,14 @@ export default function VideoMeetComponent() {
 
     if (signal.ice) {
       if (pc.remoteDescription?.type) {
-        try { await pc.addIceCandidate(new RTCIceCandidate(signal.ice)); }
+        try {
+          dbg("signal:remoteIce(add)", { fromId, candidate: signal.ice?.candidate });
+          await pc.addIceCandidate(new RTCIceCandidate(signal.ice));
+        }
         catch (e) { console.warn("ICE error:", e); }
       } else {
         if (!iceCandidateQueue.current[fromId]) iceCandidateQueue.current[fromId] = [];
+        dbg("signal:remoteIce(queue)", { fromId, candidate: signal.ice?.candidate });
         iceCandidateQueue.current[fromId].push(signal.ice);
       }
     }
@@ -319,40 +376,58 @@ export default function VideoMeetComponent() {
     });
 
     socketRef.current.on("signal", gotMessageFromServer);
+    socketRef.current.on("connect", () =>
+      dbg("socket:connect", { id: socketRef.current.id, roomId })
+    );
+    socketRef.current.on("disconnect", (reason) =>
+      dbg("socket:disconnect", { reason })
+    );
 
     socketRef.current.on("chat-message", addMessage);
+    socketRef.current.on("participants", (list = []) => {
+      setParticipants(Array.isArray(list) ? list : []);
+    });
 
     socketRef.current.on("user-left", (id) => {
+      dbg("room:user-left", { id });
       if (connections[id]) {
         connections[id].close();
         delete connections[id];
       }
+      setParticipants((prev) => prev.filter((p) => p !== id));
       setPinnedSocketId((prev) => (prev === id ? null : prev));
       setVideos((prev) => prev.filter((v) => v.socketId !== id));
       videoRef.current = videoRef.current.filter((v) => v.socketId !== id);
     });
 
-    // Existing users: create a PC for the new peer and wait for their offer.
+    // Existing users: when someone joins, we initiate the offer to them.
     socketRef.current.on("user-joined", (peerId) => {
-      ensurePeerConnection(peerId);
+      dbg("room:user-joined", { peerId });
+      const pc = ensurePeerConnection(peerId);
+      if (!pc) return;
+      pc.createOffer()
+        .then((desc) => pc.setLocalDescription(desc))
+        .then(() =>
+          socketRef.current.emit(
+            "signal",
+            peerId,
+            JSON.stringify({ sdp: pc.localDescription })
+          )
+        )
+        .catch(console.error);
     });
 
-    // Joining user: server tells us who is already in the room, so we initiate offers.
+    // Joining user: create peer connections for existing users and wait for offers.
     socketRef.current.on("existing-users", (users = []) => {
+      dbg("room:existing-users", { users });
       users.forEach((peerId) => {
-        const pc = ensurePeerConnection(peerId);
-        if (!pc) return;
-        pc.createOffer()
-          .then((desc) => pc.setLocalDescription(desc))
-          .then(() =>
-            socketRef.current.emit(
-              "signal",
-              peerId,
-              JSON.stringify({ sdp: pc.localDescription })
-            )
-          )
-          .catch(console.error);
+        ensurePeerConnection(peerId);
       });
+    });
+
+    socketRef.current.on("connect_error", (err) => {
+      dbg("socket:connect_error", { message: err?.message || String(err) });
+      console.error("Socket connect_error:", err?.message || err);
     });
 
     socketRef.current.on("connect", () => {
@@ -368,6 +443,7 @@ export default function VideoMeetComponent() {
       }
       setPinnedSocketId(null);
       setVideos([]);
+      setParticipants([]);
       videoRef.current = [];
       setMessages([]);
       setNewMessages(0);
@@ -432,7 +508,14 @@ export default function VideoMeetComponent() {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   };
 
-  const connect = () => { setAskForUsername(false); getMedia(); };
+  const connect = () => {
+    (async () => {
+      if (!username.trim()) return;
+      await getPermissions();
+      setAskForUsername(false);
+      getMedia();
+    })().catch(console.error);
+  };
 
   const copyMeetingCode = () => {
     navigator.clipboard.writeText(window.location.href);
@@ -632,7 +715,9 @@ export default function VideoMeetComponent() {
                   <div className="absolute bottom-4 left-1/2 -translate-x-1/2
                     bg-black/60 backdrop-blur-sm text-slate-300 text-xs
                     px-4 py-1.5 rounded-full border border-white/10 whitespace-nowrap">
-                    Waiting for others to join…
+                    {participants.length > 1
+                      ? `Participants connected (${participants.length}). Connecting media...`
+                      : "Waiting for others to join..."}
                   </div>
                 )}
               </div>
