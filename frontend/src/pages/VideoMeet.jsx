@@ -43,22 +43,39 @@ const parseIceServers = () => {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
+        .map((u) => {
+          // Only allow RFC 7065 transport query. Otherwise strip the query.
+          const parts = u.split("?");
+          if (parts.length === 1) return u;
+          const base = parts[0];
+          const query = parts.slice(1).join("?").trim();
+          if (/^transport=(udp|tcp)$/i.test(query)) return `${base}?${query.toLowerCase()}`;
+          return base;
+        })
     : [];
 
-  if (turnUrls.length > 0) {
-    servers.push({
-      urls: turnUrls.length === 1 ? turnUrls[0] : turnUrls,
-      username: turnUsername,
-      credential: turnCredential,
-    });
+  // TURN URLs must be strictly RFC 7065 compatible; if parsing fails in the browser,
+  // disable TURN rather than crashing the whole call UI.
+  if (turnUrls.length > 0 && turnUsername && turnCredential) {
+    // Use one ICE server entry per URL to avoid browser quirks with arrays.
+    for (const url of turnUrls) {
+      servers.push({
+        urls: url,
+        username: turnUsername,
+        credential: turnCredential,
+      });
+    }
   }
 
   return servers;
 };
 
-const peerConfigConnections = {
-  iceServers: parseIceServers(),
-};
+const stunOnlyIceServers = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+];
+
+const peerConfigConnections = { iceServers: parseIceServers() };
 
 function dbg(...args) {
   if (DEBUG_WEBRTC) console.log("[VideoBox:webrtc]", ...args);
@@ -286,7 +303,13 @@ export default function VideoMeetComponent() {
     if (!peerId || peerId === socketIdRef.current) return null;
     if (connections[peerId]) return connections[peerId];
 
-    const pc = new RTCPeerConnection(peerConfigConnections);
+    let pc;
+    try {
+      pc = new RTCPeerConnection(peerConfigConnections);
+    } catch (err) {
+      console.error("RTCPeerConnection init failed, falling back to STUN-only:", err);
+      pc = new RTCPeerConnection({ iceServers: stunOnlyIceServers });
+    }
     connections[peerId] = pc;
 
     dbg("pc:create", { peerId, iceServers: peerConfigConnections.iceServers });
