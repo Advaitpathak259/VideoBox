@@ -5,15 +5,21 @@ let messages = {};
 let timeOnline = {};
 
 const parseAllowedOrigins = () => {
+  const normalizeOrigin = (value) => {
+    const v = String(value || "").trim();
+    if (!v) return "";
+    return v.endsWith("/") ? v.slice(0, -1) : v;
+  };
+
   const raw = process.env.FRONTEND_URL;
   const fromEnv = raw
     ? raw
         .split(",")
-        .map((s) => s.trim())
+        .map(normalizeOrigin)
         .filter(Boolean)
     : [];
 
-  const defaults = ["http://localhost:3000"];
+  const defaults = ["http://localhost:3000"].map(normalizeOrigin);
   return [...new Set([...fromEnv, ...defaults])];
 };
 
