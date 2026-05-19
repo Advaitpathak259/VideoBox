@@ -1,5 +1,5 @@
-import React, { useState, useContext, useMemo, useEffect } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import React, { useState, useContext } from "react";
+import { useLocation } from "react-router-dom";
 import { 
   Mail, 
   User, 
@@ -18,7 +18,6 @@ import { useTheme } from "../contexts/ThemeContext";
 
 export default function Authentication() {
   const location = useLocation();
-  const navigate = useNavigate();
   const searchParams = new URLSearchParams(location.search);
   
   // Logic for Form State

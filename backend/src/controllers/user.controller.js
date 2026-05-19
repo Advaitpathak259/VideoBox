@@ -1,10 +1,21 @@
 import httpStatus from "http-status";
+import mongoose from "mongoose";
 import { User } from "../models/user.model.js";
-import bcrypt, { hash } from "bcrypt";
+import bcrypt from "bcrypt";
 
 import crypto from "crypto";
 import { Meeting } from "../models/meeting.model.js";
+
+const ensureDbReady = (res) => {
+  if (mongoose.connection.readyState === 1) return true;
+  res
+    .status(httpStatus.SERVICE_UNAVAILABLE)
+    .json({ message: "Database is not connected" });
+  return false;
+};
+
 const login = async (req, res) => {
+  if (!ensureDbReady(res)) return;
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -38,7 +49,12 @@ const login = async (req, res) => {
 };
 
 const register = async (req, res) => {
+  if (!ensureDbReady(res)) return;
   const { name, username, password } = req.body;
+
+  if (!name || !username || !password) {
+    return res.status(httpStatus.BAD_REQUEST).json({ message: "Please Provide" });
+  }
 
   try {
     const existingUser = await User.findOne({ username });
@@ -65,10 +81,18 @@ const register = async (req, res) => {
 };
 
 const getUserHistory = async (req, res) => {
+  if (!ensureDbReady(res)) return;
   const { token } = req.query;
+
+  if (!token) {
+    return res.status(httpStatus.BAD_REQUEST).json({ message: "Missing token" });
+  }
 
   try {
     const user = await User.findOne({ token: token });
+    if (!user) {
+      return res.status(httpStatus.UNAUTHORIZED).json({ message: "Invalid token" });
+    }
     const meetings = await Meeting.find({ user_id: user.username });
     res.json(meetings);
   } catch (e) {
@@ -77,10 +101,20 @@ const getUserHistory = async (req, res) => {
 };
 
 const addToHistory = async (req, res) => {
+  if (!ensureDbReady(res)) return;
   const { token, meeting_code } = req.body;
+
+  if (!token || !meeting_code) {
+    return res
+      .status(httpStatus.BAD_REQUEST)
+      .json({ message: "Missing token or meeting_code" });
+  }
 
   try {
     const user = await User.findOne({ token: token });
+    if (!user) {
+      return res.status(httpStatus.UNAUTHORIZED).json({ message: "Invalid token" });
+    }
 
     const newMeeting = new Meeting({
       user_id: user.username,
